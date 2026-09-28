@@ -81,7 +81,37 @@ OFFENSIVE_SIGNALS = [
 
 LAUGHTER_SIGNALS = ['lol', 'haha', 'lmao', '😂', '💀', '😆', 'hehe', 'xd']
 
+def get_offensive_signal(text: str) -> float:
+    """
+    Detect explicit offensive / abusive language.
 
+    Returns:
+        0.0 = no offensive signal
+        1.0 = strong offensive signal
+    """
+
+    text_lower = text.lower().strip()
+
+    if not text_lower:
+        return 0.0
+
+    hits = sum(
+        1
+        for signal in OFFENSIVE_SIGNALS
+        if signal in text_lower
+    )
+
+    if hits == 0:
+        return 0.0
+
+    # One explicit offensive term is already meaningful.
+    if hits == 1:
+        return 0.75
+
+    if hits == 2:
+        return 0.90
+
+    return 1.0
 # ─────────────────────────────────────────────────────────────────────────
 # SIGNAL 1 — MuRIL harmful score
 # ─────────────────────────────────────────────────────────────────────────
@@ -371,37 +401,6 @@ def get_sentiment_trajectory(conversation_history: list) -> tuple:
 
     return trajectory_score, scores
 
-# ─────────────────────────────────────────────────────────────────────────
-# LGS-MT — LOCAL MODEL SCORE
-# ─────────────────────────────────────────────────────────────────────────
-def get_local_model_score(text: str) -> float:
-    """
-    Returns the Local Model's probability that the message is harmful.
-
-    The Local Model is smaller than the Global Model and is intended
-    to make conversation-specific decisions efficiently.
-    """
-
-    encoding = local_tokenizer(
-        text,
-        max_length=MAX_LEN,
-        padding='max_length',
-        truncation=True,
-        return_tensors='pt'
-    )
-
-    input_ids = encoding['input_ids'].to(DEVICE)
-    attention_mask = encoding['attention_mask'].to(DEVICE)
-
-    with torch.no_grad():
-        output = local_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask
-        )
-
-        probs = torch.softmax(output.logits, dim=-1)
-
-    return float(probs[0][1])
 
 # ─────────────────────────────────────────────────────────────────────────
 # LGS-MT — MEMORY SCORES
@@ -474,7 +473,8 @@ def fuse_scores(
     local_memory_score=None,
     global_memory_score=None,
     history_length: int = 0,
-    threshold: float = THRESHOLD
+    threshold: float = THRESHOLD,
+    offensive_signal: float = 0.0
 ) -> dict:
 
     # ------------------------------------------------------------
@@ -514,7 +514,16 @@ def fuse_scores(
         1.0,
         base_score + memory_bonus
     )
+    # ------------------------------------------------------------
+    # EXPLICIT OFFENSIVE LANGUAGE BOOST
+    # ------------------------------------------------------------
 
+    offensive_boost = 0.20 * offensive_signal
+
+    score_with_offensive = min(
+        1.0,
+        score_with_memory + offensive_boost
+    )
     # ------------------------------------------------------------
     # 3. History-dependent contextual weights
     # ------------------------------------------------------------
@@ -543,7 +552,6 @@ def fuse_scores(
     # ------------------------------------------------------------
     # 4. Contextual reduction
     # ------------------------------------------------------------
-
     weighted_reduction = min(
         max_reduction,
         (
@@ -552,6 +560,14 @@ def fuse_scores(
             + trajectory_score * W_TRAJ
         )
     )
+
+    # Do not allow banter/context reduction to hide
+    # explicit offensive language.
+    if offensive_signal >= 0.75:
+        weighted_reduction = min(
+            weighted_reduction,
+            0.15
+        )
 
     # ------------------------------------------------------------
     # 5. Protect strong model evidence
@@ -576,7 +592,7 @@ def fuse_scores(
     # ------------------------------------------------------------
 
     adjusted_score = (
-        score_with_memory *
+        score_with_offensive *
         (1 - weighted_reduction)
     )
 
@@ -641,6 +657,12 @@ def fuse_scores(
         "adjusted_score":
             round(adjusted_score, 4),
 
+        "offensive_signal":
+            round(offensive_signal, 4),
+
+        "offensive_boost":
+            round(offensive_boost, 4),
+
         "flagged":
             flagged,
 
@@ -651,29 +673,6 @@ def fuse_scores(
 # LOCAL MODEL
 # ─────────────────────────────────────────────────────────────────────────
 
-LOCAL_MODEL_PATH = (
-    BASE_DIR
-    / "model"
-    / "local_model"
-    / "muril_student_4layer"
-)
-
-print(f"Loading Local Model from {LOCAL_MODEL_PATH} ...")
-
-local_tokenizer = AutoTokenizer.from_pretrained(
-    str(LOCAL_MODEL_PATH)
-)
-
-local_model = AutoModelForSequenceClassification.from_pretrained(
-    str(LOCAL_MODEL_PATH)
-).to(DEVICE)
-
-local_model.eval()
-
-print(
-    f"✅ Local Model loaded: "
-    f"{sum(p.numel() for p in local_model.parameters()) / 1e6:.2f}M parameters"
-)
 
 
 def get_local_model_score(

@@ -30,7 +30,6 @@ Architecture:
 """
 lgs_pipeline.py — LGS-MT confidence-based router
 """
-
 from .pipeline import (
     get_local_model_score,
     get_muril_score,
@@ -38,6 +37,7 @@ from .pipeline import (
     get_reciprocity_score,
     get_sentiment_trajectory,
     get_message_embedding,
+    get_offensive_signal,
     fuse_scores,
     THRESHOLD,
 )
@@ -60,7 +60,11 @@ def lgs_pipeline(
 ):
     text = current_message["text"]
     full_history = conversation_history + [current_message]
+    # ------------------------------------------------------------
+    # EXPLICIT OFFENSIVE LANGUAGE
+    # ------------------------------------------------------------
 
+    offensive_signal = get_offensive_signal(text)
     # ------------------------------------------------------------
     # 1. ALWAYS-ON LOCAL SIGNALS
     # ------------------------------------------------------------

@@ -6,3 +6,4 @@ torch
 vaderSentiment
 scipy
 python-multipart
+PyJWT

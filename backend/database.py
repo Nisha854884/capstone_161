@@ -37,6 +37,14 @@ def get_or_create_collection(conversation_id: str):
             metadata = {"hnsw:space": "cosine"}
         )
 
+def get_collection_if_exists(conversation_id: str):
+    """Get an existing conversation collection without creating one."""
+    name = f"conv_{conversation_id}"
+
+    try:
+        return chroma_client.get_collection(name=name)
+    except Exception:
+        return None
 
 def delete_conversation(conversation_id: str) -> bool:
     """Delete all messages for a conversation. Returns True if deleted."""
@@ -124,7 +132,10 @@ def fetch_conversation_history(
     Returns list ordered oldest to newest:
     [{"sender": str, "text": str, "timestamp": str, "flagged": bool}, ...]
     """
-    collection = get_or_create_collection(conversation_id)
+    collection = get_collection_if_exists(conversation_id)
+
+    if collection is None:
+        return []
 
     if collection.count() == 0:
         return []
@@ -153,9 +164,9 @@ def get_all_messages(conversation_id: str) -> list:
     Used by the /db/view/{conversation_id} endpoint.
     Sorted by message_number (sequential order).
     """
-    collection = get_or_create_collection(conversation_id)
+    collection = get_collection_if_exists(conversation_id)
 
-    if collection.count() == 0:
+    if collection is None or collection.count() == 0:
         return []
 
     results = collection.get(include=["metadatas"])

@@ -50,6 +50,17 @@ def get_local_memory(conversation_id: str):
             metadata={"hnsw:space": "cosine"}
         )
 
+def get_existing_local_memory(conversation_id: str):
+    """Get an existing conversation memory without creating one."""
+
+    collection_name = f"conv_{conversation_id}"
+
+    try:
+        return chroma_client.get_collection(
+            name=collection_name
+        )
+    except Exception:
+        return None
 
 def search_local_memory(
     conversation_id: str,
@@ -57,7 +68,10 @@ def search_local_memory(
     n_results: int = 5
 ):
 
-    collection = get_local_memory(conversation_id)
+    collection = get_existing_local_memory(conversation_id)
+
+    if collection is None:
+        return []
 
     if collection.count() == 0:
         return []
