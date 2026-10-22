@@ -101,13 +101,15 @@ def lgs_pipeline(
         else []
     )
 
+    flagged_local = [
+        m for m in local_memories
+        if m.get("flagged")
+    ]
+
     local_memory_score = max(
         (
-            max(
-                0.0,
-                min(1.0, m.get("similarity", 0.0))
-            )
-            for m in local_memories
+            max(0.0, min(1.0, m.get("similarity", 0.0)))
+            for m in flagged_local
         ),
         default=None
     )
@@ -276,6 +278,8 @@ def lgs_pipeline(
         "contextual_risk": contextual_risk,
 
         "router_reason": router_reason,
+
+        "embedding": embedding,
 
     })
 

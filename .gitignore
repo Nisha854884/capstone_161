@@ -8,3 +8,22 @@ frontend/node_modules/
 frontend/dist/
 .ipynb_checkpoints/
 backend/test/
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Additional Python environment and cache files
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend build output
+frontend/dist/
+
+# Local logs and OS files
+*.log
+.DS_Store
+Thumbs.db

@@ -157,6 +157,40 @@ def get_chat_messages(conversation_id):
     """, (conversation_id,)).fetchall()
 
     conn.close()
+    messages=[dict(row) for row in rows]
+    for m in messages:
+        m["flagged"]=bool(m["flagged"])
+    return messages
 
-    return [dict(row) for row in rows]
+def get_admin_stats():
+    """Aggregate moderation stats from SQLite. No message content."""
 
+    conn = get_connection()
+
+    rows = conn.execute("""
+        SELECT
+            c.id,
+            u1.username AS user1,
+            u2.username AS user2,
+            COUNT(m.id) AS total_messages,
+            COALESCE(SUM(m.flagged), 0) AS flagged_messages,
+            MAX(m.created_at) AS last_activity
+        FROM conversations c
+        LEFT JOIN users u1 ON u1.id = c.user1_id
+        LEFT JOIN users u2 ON u2.id = c.user2_id
+        LEFT JOIN chat_messages m ON m.conversation_id = c.id
+        GROUP BY c.id
+        HAVING COUNT(m.id) > 0
+        ORDER BY last_activity DESC
+    """).fetchall()
+
+    conn.close()
+
+    conversations = [dict(r) for r in rows]
+
+    return {
+        "total_conversations": len(conversations),
+        "total_messages": sum(c["total_messages"] for c in conversations),
+        "flagged_messages": sum(c["flagged_messages"] for c in conversations),
+        "conversations": conversations
+    }

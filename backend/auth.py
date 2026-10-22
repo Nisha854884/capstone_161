@@ -233,6 +233,26 @@ def add_strike(user_id: str):
 
     return row[0] if row else 0
 
+def reset_strikes(user_id: str):
+
+    conn = get_connection()
+
+    cursor = conn.execute(
+        """
+        UPDATE users
+        SET strikes = 0
+        WHERE id = ?
+        """,
+        (user_id,)
+    )
+
+    conn.commit()
+    updated = cursor.rowcount
+
+    conn.close()
+
+    return updated > 0
+
 # ---------------------------------------------------------
 # FRIEND SYSTEM
 # ---------------------------------------------------------

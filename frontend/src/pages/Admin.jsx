@@ -17,44 +17,19 @@ export default function Admin({ user, onLogout }) {
     try {
       setLoading(true);
 
-      const [
-        usersResponse,
-        conversationsResponse,
-        statsResponse
-      ] = await Promise.all([
-
+      const [usersResponse, statsResponse] = await Promise.all([
         api.get("/auth/users"),
-
-        api.get("/db/conversations"),
-
-        api.get("/db/stats")
-
+        api.get("/admin/stats")
       ]);
 
-
-      setUsers(
-        usersResponse.data.users || []
-      );
-
-      setConversations(
-        conversationsResponse.data.conversations || []
-      );
-
-      setStats(
-        statsResponse.data || {}
-      );
+      setUsers(usersResponse.data.users || []);
+      setConversations(statsResponse.data.conversations || []);
+      setStats(statsResponse.data || {});
 
     } catch (error) {
-
-      console.error(
-        "Could not load admin dashboard:",
-        error
-      );
-
+      console.error("Could not load admin dashboard:", error);
     } finally {
-
       setLoading(false);
-
     }
   }
 
@@ -88,6 +63,25 @@ export default function Admin({ user, onLogout }) {
     }
   }
 
+  async function resetStrikes(userId) {
+
+    try {
+
+      await api.post(`/auth/reset-strikes/${userId}`);
+
+      await loadDashboard();
+
+    } catch (error) {
+
+      console.error("Could not reset strikes:", error);
+
+      alert(
+        error.response?.data?.detail ||
+        "Could not reset strikes."
+      );
+
+    }
+  }
 
   // ==================================================
   // LOADING
@@ -112,46 +106,12 @@ export default function Admin({ user, onLogout }) {
   // STATISTICS
   // ==================================================
 
-  const totalUsers =
-    users.length;
+  const totalUsers = users.length;
+  const totalConversations = stats.total_conversations ?? 0;
+  const totalMessages = stats.total_messages ?? 0;
+  const flaggedMessages = stats.flagged_messages ?? 0;
 
-
-  const totalConversations =
-    conversations.length;
-
-
-  const totalMessages =
-    conversations.reduce(
-      (total, conversation) =>
-        total +
-        Number(
-          conversation.message_count ??
-          conversation.total ??
-          0
-        ),
-      0
-    );
-
-
-  const flaggedMessages =
-    conversations.reduce(
-      (total, conversation) =>
-        total +
-        Number(
-          conversation.flagged_count ??
-          conversation.flagged ??
-          0
-        ),
-      0
-    );
-
-
-  const allowedMessages =
-    Math.max(
-      0,
-      totalMessages - flaggedMessages
-    );
-
+  const allowedMessages = Math.max(0, totalMessages - flaggedMessages);
 
   const flagRate =
     totalMessages > 0
@@ -510,14 +470,29 @@ export default function Admin({ user, onLogout }) {
 
                       {u.role !== "admin" ? (
 
-                        <button
-                          style={styles.strikeButton}
-                          onClick={() =>
-                            addStrike(u.username)
-                          }
-                        >
-                          + Strike
-                        </button>
+                        <div style={{ display: "flex", gap: 8 }}>
+
+                          <button
+                            style={styles.strikeButton}
+                            onClick={() =>
+                              addStrike(u.username)
+                            }
+                          >
+                            + Strike
+                          </button>
+                          
+                          <button
+                            style={{
+                              ...styles.resetButton,
+                              opacity: Number(u.strikes || 0) > 0 ? 1 : 0.4,
+                              cursor: Number(u.strikes || 0) > 0 ? "pointer" : "not-allowed"
+                            }}
+                            disabled={Number(u.strikes || 0) === 0}
+                            onClick={() => resetStrikes(u.id)}
+                          >
+                            ↺ Reset
+                          </button>
+                        </div>
 
                       ) : (
 
@@ -606,82 +581,33 @@ export default function Admin({ user, onLogout }) {
 
                   {conversations.map((conversation) => {
 
-                    const messages =
-                      Number(
-                        conversation.message_count ??
-                        conversation.total ??
-                        0
-                      );
-
-                    const flagged =
-                      Number(
-                        conversation.flagged_count ??
-                        conversation.flagged ??
-                        0
-                      );
-
-                    const rate =
-                      messages > 0
-                        ? (flagged / messages) * 100
-                        : 0;
-
+                    const messages = Number(conversation.total_messages || 0);
+                    const flagged = Number(conversation.flagged_messages || 0);
+                    const rate = messages > 0 ? (flagged / messages) * 100 : 0;
 
                     return (
 
-                      <tr
-                        key={conversation.id}
-                        style={styles.tableRow}
-                      >
+                      <tr key={conversation.id} style={styles.tableRow}>
 
                         <td style={styles.td}>
-
                           <div style={styles.conversationCell}>
-
-                            <span style={styles.chatIcon}>
-                              💬
-                            </span>
-
-                            <span>
-                              Conversation
-                            </span>
-
+                            <span style={styles.chatIcon}>💬</span>
+                            <span>{conversation.user1} ↔ {conversation.user2}</span>
                           </div>
-
                         </td>
 
+                        <td style={styles.td}>{messages}</td>
 
                         <td style={styles.td}>
-                          {messages}
-                        </td>
-
-
-                        <td style={styles.td}>
-
-                          <span
-                            style={
-                              flagged > 0
-                                ? styles.flaggedBadge
-                                : styles.safeBadge
-                            }
-                          >
+                          <span style={flagged > 0 ? styles.flaggedBadge : styles.safeBadge}>
                             {flagged}
                           </span>
-
                         </td>
 
-
                         <td style={styles.td}>
-
-                          <span
-                            style={
-                              flagged > 0
-                                ? styles.warningRate
-                                : styles.safeRate
-                            }
-                          >
+                          <span style={flagged > 0 ? styles.warningRate : styles.safeRate}>
                             {rate.toFixed(1)}%
                           </span>
-
                         </td>
 
                       </tr>
@@ -1016,6 +942,14 @@ const styles = {
     fontFamily: "monospace"
   },
 
+  resetButton: {
+    background: "#052e16",
+    border: "1px solid #166534",
+    color: "#4ade80",
+    padding: "7px 11px",
+    borderRadius: 6,
+    fontFamily: "monospace"
+  },
 
   protectedText: {
     color: "#64748b",

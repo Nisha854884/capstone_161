@@ -12,8 +12,18 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from .chat import (
+    init_chat_db,
+    get_or_create_conversation,
+    save_chat_message,
+    get_chat_messages,
+    get_admin_stats
+)
 
 import torch
+
+STRIKE_LIMIT = 3
+
 
 # -------------------------------------------------------------------
 # LGS-MT / DATABASE IMPORTS
@@ -55,6 +65,7 @@ from .auth import (
     get_user,
     get_all_users,
     add_strike,
+    reset_strikes,
     send_friend_request,
     get_pending_requests,
     accept_friend_request,
@@ -116,6 +127,14 @@ def require_user(
             detail="User not found."
         )
 
+    return user
+
+def require_admin(user=Depends(require_user)):
+    if user["role"] != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required."
+        )
     return user
 
 
@@ -280,9 +299,12 @@ async def current_user(
 ):
     return user
 
+@app.get("/admin/stats")
+async def admin_stats(admin=Depends(require_admin)):
+    return {"success": True, **get_admin_stats()}
 
 @app.get("/auth/users")
-async def all_users():
+async def all_users(admin=Depends(require_admin)):
 
     try:
 
@@ -303,7 +325,7 @@ async def all_users():
 
 
 @app.post("/auth/strike/{username}")
-async def user_strike(username: str):
+async def user_strike(username: str, admin=Depends(require_admin)):
 
     try:
 
@@ -343,6 +365,28 @@ async def user_strike(username: str):
             status_code=500,
             detail=f"Could not add strike: {str(e)}"
         )
+
+@app.post("/auth/reset-strikes/{user_id}")
+async def reset_user_strikes(
+    user_id: str,
+    admin=Depends(require_admin)
+):
+
+    target = get_user(user_id)
+
+    if not target:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found."
+        )
+
+    reset_strikes(user_id)
+
+    return {
+        "success": True,
+        "username": target["username"],
+        "strikes": 0
+    }
 
 
 # ===================================================================
@@ -744,6 +788,32 @@ async def get_chat_conversation(
     }
 
 
+@app.get("/chat/status/{other_user_id}")
+async def chat_status(
+    other_user_id: str,
+    user=Depends(require_user)
+):
+
+    if not are_friends(user["id"], other_user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="You can only view status of accepted friends."
+        )
+
+    other = get_user(other_user_id)
+
+    if not other:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found."
+        )
+
+    return {
+        "success": True,
+        "restricted": other["strikes"] >= STRIKE_LIMIT
+    }
+
+
 @app.get("/chat/{conversation_id}")
 async def get_chat(
     conversation_id: str,
@@ -768,6 +838,13 @@ async def send_chat_message(
 ):
 
     sender_id = user["id"]
+
+    # Restricted users cannot send
+    if user["strikes"] >= STRIKE_LIMIT:
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is restricted due to repeated violations."
+        )
 
     # ---------------------------------------------------------------
     # FRIEND CHECK
@@ -809,6 +886,12 @@ async def send_chat_message(
         raise HTTPException(
             status_code=404,
             detail="Receiver not found."
+        )
+    
+    if receiver["strikes"] >= STRIKE_LIMIT:
+        raise HTTPException(
+            status_code=403,
+            detail="The other user has been blocked, so you can no longer chat with them."
         )
 
     # ---------------------------------------------------------------
@@ -875,6 +958,27 @@ async def send_chat_message(
         score=score
     )
 
+    # Store in ChromaDB so local memory works in the real chat
+    try:
+        store_message(
+            conversation_id=req.conversation_id,
+            sender_id=sender_id,
+            message_text=message_text,
+            embedding=result["embedding"],
+            muril_score=result.get("global_score"),
+            adjusted_score=score,
+            banter_signal=result.get("banter_signal", 0.0),
+            reciprocity_score=result.get("reciprocity_score", 0.5),
+            reduction_applied=result.get("reduction_applied", 0.0),
+            flagged=flagged
+        )
+    except Exception as e:
+        print(f"Chroma store failed: {e}")
+
+    strikes=user["strikes"]
+    if flagged:
+        strikes=add_strike(sender_id)
+
     return {
 
         "success": True,
@@ -896,7 +1000,10 @@ async def send_chat_message(
                 "flag"
                 if flagged
                 else "allow"
-            )
+            ),
+
+            "strikes": strikes,
+            "restricted": strikes >= STRIKE_LIMIT
         }
     }
 
@@ -906,7 +1013,7 @@ async def send_chat_message(
 # ===================================================================
 
 @app.get("/db/conversations")
-async def get_conversations():
+async def get_conversations(admin=Depends(require_admin)):
 
     conversations = list_all_conversations()
 
@@ -918,7 +1025,8 @@ async def get_conversations():
 
 @app.get("/db/view/{conversation_id}")
 async def view_conversation(
-    conversation_id: str
+    conversation_id: str,
+    admin=Depends(require_admin)
 ):
 
     messages = get_all_messages(
@@ -981,7 +1089,8 @@ async def database_stats():
 
 @app.delete("/db/{conversation_id}")
 async def clear_conversation(
-    conversation_id: str
+    conversation_id: str,
+    admin=Depends(require_admin)
 ):
 
     deleted = delete_conversation(
